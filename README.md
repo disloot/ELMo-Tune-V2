@@ -1,5 +1,7 @@
-# ELMo-Tune-V2
+# ELMo-Tune-V2: LLM-Assisted Full-Cycle Auto-Tuning to Optimize LSM-Based Key-Value Stores
 This project aims to determine the best configuration for RocksDB using the assistance of LLMs. The process is completely automated, with the user only needing to run their workload.
+
+Our arXiv paper can be found <u>[here](https://arxiv.org/abs/2502.17606)</u>
 
 ## Prerequisites
 The following instructions are for Ubuntu 20.04 and require Python 3.6 or higher:  
@@ -62,5 +64,4 @@ python3 main.py
 
 ## More Information
 - **Contact**: https://asu-idi.github.io/members/zhichao-cao.html
-- **About the project**: https://asu-idi.github.io/projects/gpt_project.html
 - **ASU IDI Lab**: https://asu-idi.github.io/
