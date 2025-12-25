@@ -1,6 +1,7 @@
 import subprocess
 import os
 import time
+import psutil
 from cgroup_monitor import CGroupMonitor, CGroupManager
 
 from gpt.content_generator import error_correction_options_file_generation
@@ -17,6 +18,25 @@ from utils.system_operations.fio_runner import get_fio_result
 from utils.system_operations.get_sys_info import system_info
 from trace_analyzer.analyzer import analyze_tracefile, analyze_last_n_tracefile_windows
 
+
+# Check if cgroup is available
+def is_cgroup_available():
+    try:
+        cgroup_path = "/sys/fs/cgroup/llm_cgroup_test"
+        helper = os.path.abspath("utils/root_cgroup_helper.sh")
+        if not os.path.exists(helper):
+            return False
+        # Try to create a test cgroup
+        res = subprocess.run(["sudo", helper, "create", cgroup_path], capture_output=True)
+        if res.returncode == 0:
+            # Clean up
+            subprocess.run(["sudo", "rmdir", cgroup_path], capture_output=True)
+            return True
+        return False
+    except:
+        return False
+
+CGROUP_AVAILABLE = is_cgroup_available()
 
 def pre_tasks(database_path, run_count):
     '''
@@ -178,7 +198,7 @@ def db_bench(db_bench_path, database_path, options, run_count, test_name, previo
     print("[SPM] Executing db_bench")
 
 
-    if SIDE_CHECKER and previous_throughput != None:
+    if SIDE_CHECKER and previous_throughput != None and CGROUP_AVAILABLE:
         cgm = CGroupManager("llm_cgroup", helper_script=os.path.abspath("utils/root_cgroup_helper.sh"))
         cgroup_monitor = CGroupMonitor("llm_cgroup")
         
@@ -288,28 +308,56 @@ def db_bench(db_bench_path, database_path, options, run_count, test_name, previo
         return output, avg_cpu_used, avg_mem_used, options
     
     else:
+        if CGROUP_AVAILABLE:
+            cgm = CGroupManager("llm_cgroup", helper_script=os.path.abspath("utils/root_cgroup_helper.sh"))
+            cgm.create_cgroup()
+            cgm.set_cpu_limit(4)
+            cgm.set_memory_limit(4*1024*1024*1024)
+            cgm.set_memory_swap_limit(4*1024*1024*1024)
 
-        cgm = CGroupManager("llm_cgroup", helper_script=os.path.abspath("utils/root_cgroup_helper.sh"))
-        cgm.create_cgroup()
-        cgm.set_cpu_limit(4)
-        cgm.set_memory_limit(4*1024*1024*1024)
-        cgm.set_memory_swap_limit(4*1024*1024*1024)
+            cgroup_monitor = CGroupMonitor("llm_cgroup")
+            cgroup_monitor.start_monitor()
 
-        cgroup_monitor = CGroupMonitor("llm_cgroup")
-        cgroup_monitor.start_monitor()
+            proc_out = subprocess.Popen(
+                command,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                universal_newlines=True
+            )
+            cgm.add_process(proc_out.pid, sudo=True)
+            stdout, stderr = proc_out.communicate()
 
-        proc_out = subprocess.Popen(
-            command,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            universal_newlines=True
-        )
-        cgm.add_process(proc_out.pid, sudo=True)
-        stdout, stderr = proc_out.communicate()
-
-        op = cgroup_monitor.stop_monitor()
-        avg_cpu_used = op["average_cpu_usage_percent"]
-        avg_mem_used = op["average_memory_usage_percent"]
+            op = cgroup_monitor.stop_monitor()
+            avg_cpu_used = op["average_cpu_usage_percent"]
+            avg_mem_used = op["average_memory_usage_percent"]
+        else:
+            # Fallback for systems without cgroup support
+            print("[SPM] CGroup not available, falling back to psutil for monitoring")
+            proc_out = subprocess.Popen(
+                command,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                universal_newlines=True
+            )
+            
+            # Monitoring loop for psutil
+            cpu_usages = []
+            mem_usages = []
+            try:
+                ps_proc = psutil.Process(proc_out.pid)
+                while proc_out.poll() is None:
+                    try:
+                        cpu_usages.append(ps_proc.cpu_percent(interval=0.5))
+                        mem_usages.append(ps_proc.memory_percent())
+                    except (psutil.NoSuchProcess, psutil.AccessDenied):
+                        break
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                pass
+                
+            stdout, stderr = proc_out.communicate()
+            
+            avg_cpu_used = sum(cpu_usages) / len(cpu_usages) if cpu_usages else 0.0
+            avg_mem_used = sum(mem_usages) / len(mem_usages) if mem_usages else 0.0
 
         print("[SPM] Finished running db_bench")
         print("---------------------------------------------------------------------------")
@@ -331,50 +379,69 @@ def benchmark(db_path, options, output_file_dir, reasoning, changed_value_dict, 
     - is_error (bool): 
     - benchmark_results (dict):
     '''
+    # ---- Choose execution path ------------------------------------------------
+    # If there is no `previous_results`, this is the initial (baseline) run
+    # and we call `db_bench` without a previous throughput to compare against.
     if previous_results is None:
         output, average_cpu_usage, average_memory_usage, options = db_bench(
             DB_BENCH_PATH, db_path, options, iteration_count, TEST_NAME, None, options_files, db_bench_args)
     else:
+        # If fine-tuning is disabled, call db_bench providing the previous
+        # throughput so the monitor can compare and decide mid-run actions.
         if FINETUNE_ITERATION <= 0:
             output, average_cpu_usage, average_memory_usage, options = db_bench(
                 DB_BENCH_PATH, db_path, options, iteration_count, TEST_NAME, previous_results['ops_per_sec'], options_files, db_bench_args)
         else:
+            # When fine-tuning is enabled, `fine_tuning()` drives a local
+            # micro-search around mutable options and returns final values.
             output, average_cpu_usage, average_memory_usage, options, changed_value_dict = fine_tuning(
                 db_path, options, reasoning, changed_value_dict, previous_results['ops_per_sec'], options_files, db_bench_args)
 
+    # ---- Parse benchmark output -------------------------------------------------
+    # `output` is the final stdout captured from db_bench. Note that
+    # db_bench() may have internally performed a mid-run restart and
+    # returned the final run's output (the caller only receives the
+    # terminal run). We parse that stdout into structured metrics.
     # log_update(f"[SPM] Output: {output}")
     benchmark_results = parse_db_bench_output(output)
 
     contents = os.listdir(output_file_dir)
     ini_file_count = len([f for f in contents if f.endswith(".ini")])
 
-    # ERROR: Unable to load options file*
+    # ---- Error: options parsing/loading failure ---------------------------------
+    # If parse_db_bench_output detected an error (e.g. RocksDB failed to
+    # load the options file), save a snapshot of the failed configuration
+    # and restore the last known-good options file so subsequent runs are
+    # not impacted. Trigger LLM-driven error correction (bounded retries).
     if benchmark_results.get("error") is not None:
         is_error = True
         log_update(f"[SPM] Benchmark failed, the error is: {benchmark_results.get('error')}")
         print("[SPM] Benchmark failed, the error is: ",
               benchmark_results.get("error"))
-        # Save incorrect options in a file
+        # Persist the failing run for debugging
         store_db_bench_output(output_file_dir,
                               f"{ini_file_count}-incorrect_options.ini",
                               benchmark_results, options, reasoning, changed_value_dict)
-        # Restore previous options_file
+        # Restore previous options_file (rollback to last known-good)
         with open(f"{OPTIONS_FILE_DIR}", "w") as f:
             f.write(options_files[-1][0])
 
+        # Ask GPT to attempt an automatic correction and retry (limited)
         if bm_iter < ERROR_CORRECTION_COUNT:
             print(f"[SPM] Retrying the benchmark with error correction {bm_iter+1}/{ERROR_CORRECTION_COUNT}")
             log_update(f"[SPM] Retrying the benchmark with error correction {bm_iter+1}/{ERROR_CORRECTION_COUNT}")
             new_options, db_bench_args, reasoning, changed_value_dict = error_correction_options_file_generation(options, db_bench_args, reasoning, changed_value_dict, benchmark_results.get('error'), bm_iter)
+            # Re-run benchmark with corrected options (recursive retry)
             return benchmark(db_path, new_options, output_file_dir, reasoning, changed_value_dict, iteration_count, previous_results, options_files, db_bench_args, bm_iter+1)
 
-    # ERROR: unexpected error
+    # ---- Error: unexpected/empty results ---------------------------------------
     elif benchmark_results['data_speed'] is None:
+        # This indicates db_bench ran but did not produce expected metrics
         is_error = True
         log_update(f"[SPM] Benchmark failed, the error is: Data speed is None. Check DB save path")
         print("[SPM] Benchmark failed, the error is: ",
               "Data speed is None. Check DB save path")
-        # Save incorrect options in a file
+        # Persist failing run and rollback
         store_db_bench_output(output_file_dir,
                               f"{ini_file_count}-incorrect_options.ini",
                               benchmark_results, options, reasoning, changed_value_dict)
@@ -389,11 +456,15 @@ def benchmark(db_path, options, output_file_dir, reasoning, changed_value_dict, 
             return benchmark(db_path, new_options, output_file_dir, reasoning, changed_value_dict, iteration_count, previous_results, options_files, db_bench_args, bm_iter+1)
 
     else:
+        # ---- Success path ----------------------------------------------------
+        # The run produced valid metrics; persist the options + parsed
+        # results, draw graphs and return structured metrics to caller.
         is_error = False
 
-        # Store the output of db_bench in a file
+        # Persist the successful run: metrics, options file and reasoning
         store_db_bench_output(output_file_dir, f"{ini_file_count}.ini",
                               benchmark_results, options, reasoning, changed_value_dict)
+        # Plot ops/sec graph for this run
         plot_2axis(*benchmark_results["ops_per_second_graph"],
                    f"Ops Per Second - {benchmark_results['ops_per_sec']}",
                    f"{output_file_dir}/ops_per_sec_{ini_file_count}.png")
@@ -406,4 +477,5 @@ def benchmark(db_path, options, output_file_dir, reasoning, changed_value_dict, 
             f"\n[SPM] Avg CPU and Memory usage: {average_cpu_usage}% and {average_memory_usage}%"
         )
 
+    # Return final status and metrics to the caller (main orchestration loop)
     return is_error, benchmark_results, average_cpu_usage, average_memory_usage, options

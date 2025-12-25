@@ -51,9 +51,17 @@ Create `.env` file
 nano .env
 ```
 
-and put your OpenAI API Key
+and put your API Key and Base URL (if using non-OpenAI provider like DeepSeek)
 ```.env
-OPENAI_API_KEY="sk-..."
+# LLM Configuration (e.g., DeepSeek)
+OPENAI_API_KEY="your-deepseek-api-key"
+OPENAI_API_BASE="https://api.deepseek.com"
+LLM_MODEL="deepseek-chat"
+
+# Embedding Configuration (e.g., OpenAI, optional if same as above)
+EMBEDDING_API_KEY="your-openai-api-key"
+EMBEDDING_API_BASE="https://api.openai.com/v1"
+EMBEDDING_MODEL="text-embedding-3-small"
 ```
 
 Make sure the paths in `utils/constant.py` are correctly set for your system.  

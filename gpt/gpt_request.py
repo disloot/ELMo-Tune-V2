@@ -1,7 +1,7 @@
 import os
 import re
 from openai import OpenAI
-from utils.constants import EMBEDDING_MODEL, LLM_MODEL, RAG
+from utils.constants import EMBEDDING_MODEL, LLM_MODEL, RAG, OPENAI_API_KEY, OPENAI_API_BASE, EMBEDDING_API_KEY, EMBEDDING_API_BASE
 from utils.utils import log_gpt_response, log_update
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langchain_community.vectorstores import FAISS
@@ -11,12 +11,17 @@ from langchain.chains.combine_documents import create_stuff_documents_chain
 from langchain.chains import create_retrieval_chain
 
 # Environment variables
+if not OPENAI_API_KEY:
+    raise ValueError("Error: OPENAI_API_KEY is not set. Please check your .env file or environment variables.")
+
 spec_client = OpenAI(
-    api_key=os.getenv("OPENAI_API_KEY"),
+    api_key=OPENAI_API_KEY,
+    base_url=OPENAI_API_BASE,
 )
 
 client = OpenAI(
-    api_key=os.getenv("OPENAI_API_KEY"),
+    api_key=OPENAI_API_KEY,
+    base_url=OPENAI_API_BASE,
 )
 
 if 'llama' in LLM_MODEL:
@@ -25,7 +30,11 @@ if 'llama' in LLM_MODEL:
         base_url = "https://api-inference.huggingface.co/v1/",
     )
 
-embeddings = OpenAIEmbeddings(model=EMBEDDING_MODEL)
+embeddings = OpenAIEmbeddings(
+    model=EMBEDDING_MODEL,
+    openai_api_key=EMBEDDING_API_KEY,
+    openai_api_base=EMBEDDING_API_BASE,
+)
 
 def request_gpt_rag(system_content, user_contents, assistant_content, temperature):
     '''
@@ -49,7 +58,9 @@ def request_gpt_rag(system_content, user_contents, assistant_content, temperatur
     # Create LLM and RAG chains
     llm = ChatOpenAI(
         model=LLM_MODEL, 
-        temperature=temperature
+        temperature=temperature,
+        openai_api_key=OPENAI_API_KEY,
+        openai_api_base=OPENAI_API_BASE,
     )
 
     # Separate User content

@@ -3,9 +3,13 @@ from dotenv import load_dotenv
 import argparse
 from datetime import datetime
 
-load_dotenv()
+# 寻找项目根目录并加载 .env
+current_dir = os.path.dirname(os.path.abspath(__file__))
+project_root = os.path.dirname(current_dir)
+dotenv_path = os.path.join(project_root, '.env')
+load_dotenv(dotenv_path, override=True)
 
-def path_of_output_folder():
+def path_of_output_folder(output_root: str):
     '''
     Set the output folder directory
 
@@ -15,9 +19,12 @@ def path_of_output_folder():
     Returns:
     - output_folder_dir (str): The output folder directory
     '''
+    if output_root is None:
+        output_root = project_root
+        
     current_datetime = datetime.now()
     date_time_string = current_datetime.strftime("%Y-%m-%d_%H-%M-%S")
-    output_folder_dir = f"output/output_{DEVICE}/output_{date_time_string}"
+    output_folder_dir = f"{output_root}/output/{DEVICE}/{date_time_string}"
 
     os.makedirs(output_folder_dir, exist_ok=True)
     print(f"[UTL] Using output folder: {output_folder_dir}")
@@ -52,6 +59,10 @@ env_SINE_C = os.getenv("SINE_C", 0)
 env_SINE_D = os.getenv("SINE_D", 10000000) # 10M/80 for ~ 125k ops/sec
 
 # Sesame Controller Constants
+env_OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+env_OPENAI_API_BASE = os.getenv("OPENAI_API_BASE", "https://api.openai.com/v1")
+env_EMBEDDING_API_KEY = os.getenv("EMBEDDING_API_KEY", env_OPENAI_API_KEY)
+env_EMBEDDING_API_BASE = os.getenv("EMBEDDING_API_BASE", env_OPENAI_API_BASE)
 env_SIDE_CHECKER = str2bool(os.getenv("SIDE_CHECKER", True))
 env_ERROR_CORRECTION_COUNT = os.getenv("ERROR_CORRECTION_COUNT", 2)
 env_FINETUNE_ITERATION = os.getenv("FINETUNE_ITERATION", 2)
@@ -65,8 +76,7 @@ env_PRE_LOAD_CMD = os.getenv("PRE_LOAD_CMD", None)
 # If the pre-load db path is set, Sesame will simply copy the db to the db path
 # If the pre-load db path is not set, Sesame will run the pre-load command
 env_PRE_LOAD_DB_PATH = os.getenv("PRE_LOAD_DB_PATH", "")
-
-
+print(f"[UTL] Using pre-load db path: {env_PRE_LOAD_DB_PATH}")
 # Parse the arguments. They replace the environment variables if they are set
 parser = argparse.ArgumentParser(description='Description of your script')
 parser.add_argument('-i', '--iteration_count', type=int, default=env_ITERATION_COUNT, help='Specify the number of iterations')
@@ -89,6 +99,10 @@ parser.add_argument('-a', '--abstraction', type=str2bool, default=env_ABSTRACTIO
 parser.add_argument('--tracefile_path', type=str, default=env_TRACEFILE_PATH, help='Specify the path of the tracefile')
 parser.add_argument('--pre_load_cmd', type=str, default=env_PRE_LOAD_CMD, help='Specify the pre-load command')
 parser.add_argument('--pre_load_db_path', type=str, default=env_PRE_LOAD_DB_PATH, help='Specify the pre-load db path')
+parser.add_argument('--openai_api_key', type=str, default=env_OPENAI_API_KEY, help='Specify the OpenAI API key')
+parser.add_argument('--openai_api_base', type=str, default=env_OPENAI_API_BASE, help='Specify the OpenAI API base URL')
+parser.add_argument('--embedding_api_key', type=str, default=env_EMBEDDING_API_KEY, help='Specify the Embedding API key')
+parser.add_argument('--embedding_api_base', type=str, default=env_EMBEDDING_API_BASE, help='Specify the Embedding API base URL')
 parser.add_argument('--sine_write_rate_interval_milliseconds', type=int, default=env_SINE_WRITE_RATE_INTERVAL_MILLISECONDS, help='Specify the sine write rate interval in milliseconds')
 parser.add_argument('--sine_a', type=float, default=env_SINE_A, help='Specify the sine parameter a')
 parser.add_argument('--sine_b', type=float, default=env_SINE_B, help='Specify the sine parameter b')
@@ -101,7 +115,7 @@ CASE_NUMBER = args.case
 DEVICE = args.device
 TEST_NAME = args.workload
 VERSION = args.version
-OUTPUT_PATH = args.output if args.output else path_of_output_folder()
+OUTPUT_PATH = path_of_output_folder(env_OUTPUT_PATH)
 NUM_ENTRIES = args.num_entries
 NUM_THREADS = args.num_threads
 DURATION = args.duration
@@ -116,6 +130,10 @@ ABSTRACTION = args.abstraction
 TRACEFILE_PATH = args.tracefile_path
 PRE_LOAD_CMD = args.pre_load_cmd
 PRE_LOAD_DB_PATH = args.pre_load_db_path
+OPENAI_API_KEY = args.openai_api_key
+OPENAI_API_BASE = args.openai_api_base
+EMBEDDING_API_KEY = args.embedding_api_key
+EMBEDDING_API_BASE = args.embedding_api_base
 SINE_WRITE_RATE_INTERVAL_MILLISECONDS = args.sine_write_rate_interval_milliseconds
 SINE_A = args.sine_a
 SINE_B = args.sine_b
@@ -123,10 +141,10 @@ SINE_C = args.sine_c
 SINE_D = args.sine_d
 
 # Path Constants locally
-DB_BENCH_PATH = f"/data/viraj/projects/trace-llm-project/rocksdb/db_bench"
-TRACE_ANALYZER_PATH = f"/data/viraj/projects/trace-llm-project/rocksdb/trace_analyzer"
-DB_PATH = f"/data/gpt_project/db"
-FIO_RESULT_PATH = f"data/fio/fio_output_{DEVICE}.txt"
+DB_BENCH_PATH = f"/root/reproduction/Demo/bin/db_bench"
+TRACE_ANALYZER_PATH = f"/root/reproduction/Demo/bin/trace_analyzer"
+DB_PATH = f"/tmp/rocksdb_perf"
+FIO_RESULT_PATH = f"/tmp/fio/fio_output_{DEVICE}.txt"
 DEFAULT_OPTION_FILE_DIR = "options_files/default_options_files"
 INITIAL_OPTIONS_FILE_NAME = f"dbbench_default_options-{VERSION}.ini"
 OPTIONS_FILE_DIR = f"{OUTPUT_PATH}/options_file.ini"
