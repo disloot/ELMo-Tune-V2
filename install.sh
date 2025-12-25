@@ -2,13 +2,11 @@
 
 set -e
 
-
-
-
 # cd 到当前文件目录
 cd "$(dirname "$0")"
 root_dir=$(pwd)
 echo "Root directory: $root_dir"
+
 # 安装依赖
 sudo apt update || echo "Warning: apt update failed"
 sudo apt-get install -y build-essential libgflags-dev libsnappy-dev zlib1g-dev libbz2-dev liblz4-dev libzstd-dev wget fio || echo "Warning: apt install failed"
@@ -19,8 +17,8 @@ if command -v uv &> /dev/null; then
     uv sync
 fi
 
-
 install_rocksdb() {
+    # 如果监测到 db_bench trace_analyzer 已安装，跳过安装
     mkdir -p tmp && cd tmp
     if [ ! -f "rocksdb-8.8.1.tar.gz" ]; then
     wget https://github.com/facebook/rocksdb/archive/refs/tags/v8.8.1.tar.gz -O rocksdb-8.8.1.tar.gz
@@ -50,7 +48,7 @@ install_rocksdb() {
 }
  
 # 检查是否已安装 RocksDB
-if [ ! -f "$root_dir/bin/db_bench" ]; then
+if [ ! -f "$root_dir/bin/db_bench" ] || [ ! -f "$root_dir/bin/trace_analyzer" ]; then
     echo "Install RocksDB."
     install_rocksdb
 else
@@ -80,27 +78,19 @@ configure_sudoers() {
     
     echo "Attempting to write sudoers configuration to $SUDO_FILE..."
     
-    # 写入配置 (需要 sudo 权限)
-    if [ "$EUID" -ne 0 ]; then
-        echo "Warning: Not running as root. Skipping sudoers configuration."
-        echo "You may need to manually configure sudoers for cgroup helper."
+    # 使用 sudo 写入配置
+    if ! echo "$SUDO_CONFIG" | sudo tee "$SUDO_FILE" > /dev/null; then
+        echo "Warning: Failed to write to $SUDO_FILE. You might need to run this with sudo or manually configure it."
         return 0
     fi
-
-    if [ ! -w "/etc/sudoers.d/" ]; then
-        echo "Warning: /etc/sudoers.d/ is not writable. Skipping sudoers configuration."
-        return 0
-    fi
-
-    echo "$SUDO_CONFIG" | tee "$SUDO_FILE" > /dev/null || { echo "Warning: Failed to write to $SUDO_FILE"; return 0; }
-    chmod 0440 "$SUDO_FILE" || true
+    sudo chmod 0440 "$SUDO_FILE" || true
     
     # 验证配置
-    if visudo -c -f "$SUDO_FILE"; then
+    if sudo visudo -c -f "$SUDO_FILE"; then
         echo "Sudoers configured successfully."
     else
         echo "Error: Invalid sudoers configuration generated."
-        rm -f "$SUDO_FILE"
+        sudo rm -f "$SUDO_FILE"
         return 1
     fi
 }
