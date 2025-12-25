@@ -2,21 +2,22 @@
 
 set -e
 
-# apt-get update && apt-get install -y build-essential libgflags-dev libsnappy-dev zlib1g-dev libbz2-dev liblz4-dev libzstd-dev git python3 python3-pip wget fio 
 
-# uv sync
+
 
 # cd 到当前文件目录
 cd "$(dirname "$0")"
 root_dir=$(pwd)
 echo "Root directory: $root_dir"
 # 安装依赖
-apt update || echo "Warning: apt update failed"
-apt-get install -y build-essential libgflags-dev libsnappy-dev zlib1g-dev libbz2-dev liblz4-dev libzstd-dev wget fio || echo "Warning: apt install failed"
-
+sudo apt update || echo "Warning: apt update failed"
+sudo apt-get install -y build-essential libgflags-dev libsnappy-dev zlib1g-dev libbz2-dev liblz4-dev libzstd-dev wget fio || echo "Warning: apt install failed"
+pip install uv
+uv sync
 # 安装 Python 依赖
 if command -v uv &> /dev/null; then
     uv sync
+fi
 
 
 install_rocksdb() {
@@ -24,7 +25,9 @@ install_rocksdb() {
     if [ ! -f "rocksdb-8.8.1.tar.gz" ]; then
     wget https://github.com/facebook/rocksdb/archive/refs/tags/v8.8.1.tar.gz -O rocksdb-8.8.1.tar.gz
     fi
-    if [ ! -d "rocksdb-8.8.1" ]; then
+    if [ ! -f "rocksdb-8.8.1/Makefile" ]; then
+    echo "Extracting RocksDB..."
+    rm -rf rocksdb-8.8.1
     tar -xzf rocksdb-8.8.1.tar.gz
     # If the extracted directory is not rocksdb-8.8.1, rename it
     EXTRACTED_DIR=$(tar -tf rocksdb-8.8.1.tar.gz | head -n 1 | cut -f1 -d"/")
