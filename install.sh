@@ -11,11 +11,8 @@ echo "Root directory: $root_dir"
 sudo apt update || echo "Warning: apt update failed"
 sudo apt-get install -y build-essential libgflags-dev libsnappy-dev zlib1g-dev libbz2-dev liblz4-dev libzstd-dev wget fio || echo "Warning: apt install failed"
 pip install uv
+export PATH="$HOME/.local/bin:$PATH"
 uv sync
-# 安装 Python 依赖
-if command -v uv &> /dev/null; then
-    uv sync
-fi
 
 install_rocksdb() {
     # 如果监测到 db_bench trace_analyzer 已安装，跳过安装
@@ -41,7 +38,7 @@ install_rocksdb() {
      cp "$root_dir/trace_analyzer/tools/trace_analyzer_tool.h" "./rocksdb-8.8.1/tools/"
     
     cd rocksdb-8.8.1
-    make -j4 static_lib db_bench trace_analyzer
+    make -j8 static_lib db_bench trace_analyzer
     mkdir -p $root_dir/bin/
     cp db_bench trace_analyzer $root_dir/bin/
     cd $root_dir
@@ -98,3 +95,5 @@ configure_sudoers() {
 HELPER_SCRIPT="$root_dir/utils/root_cgroup_helper.sh"
 SUDO_FILE_NAME="ELMo-Tune-V2"
 configure_sudoers "$HELPER_SCRIPT" "$SUDO_FILE_NAME"
+
+echo "Installation completed successfully."
