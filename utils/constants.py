@@ -21,6 +21,8 @@ def path_of_output_folder(output_root: str):
     '''
     if output_root is None:
         output_root = project_root
+    else:
+        output_root = os.path.expanduser(output_root)
         
     current_datetime = datetime.now()
     date_time_string = current_datetime.strftime("%Y-%m-%d_%H-%M-%S")
@@ -141,8 +143,8 @@ SINE_C = args.sine_c
 SINE_D = args.sine_d
 
 # Path Constants locally
-DB_BENCH_PATH = f"/root/reproduction/Demo/bin/db_bench"
-TRACE_ANALYZER_PATH = f"/root/reproduction/Demo/bin/trace_analyzer"
+DB_BENCH_PATH = f"{project_root}/bin/db_bench"
+TRACE_ANALYZER_PATH = f"{project_root}/bin/trace_analyzer"
 DB_PATH = f"/tmp/rocksdb_perf"
 FIO_RESULT_PATH = f"/tmp/fio/fio_output_{DEVICE}.txt"
 DEFAULT_OPTION_FILE_DIR = "options_files/default_options_files"

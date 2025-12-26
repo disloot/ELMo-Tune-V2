@@ -256,22 +256,49 @@ def request_gpt_with_structured_output(system_content, user_contents, assistant_
             messages.append({"role": "user", "content": content})
 
     we_did_not_specify_stop_tokens = True
+    
+    # DeepSeek and some other models don't support the beta parse API
+    is_deepseek = "deepseek" in LLM_MODEL.lower()
+    
+    if not is_deepseek:
+        try:
+            response = spec_client.beta.chat.completions.parse(
+                model=LLM_MODEL,
+                messages=messages,
+                temperature=temperature,
+                response_format=response_format,
+            )
+
+            if response.choices[0].finish_reason == "length":
+                raise Exception("The conversation was too long for the context window, resulting in incomplete JSON")
+            if response.choices[0].message.refusal is not None:
+                raise Exception(f"The OpenAI safety system refused the request and generated a refusal instead. response.choices[0].message.refusal")
+            if response.choices[0].finish_reason == "content_filter":
+                raise Exception("The model's output included restricted content, so the generation of JSON was halted and may be partial")
+            
+            return response.choices[0].message.parsed
+            
+        except Exception as e:
+            log_update(f"[GPT] Structured output failed, falling back to manual JSON parsing: {e}")
+            print(f"[GPT] Structured output failed, falling back to manual JSON parsing: {e}")
+    
+    # Fallback to manual JSON parsing or direct use for DeepSeek
+    if messages[0]["role"] == "system":
+        messages[0]["content"] += "\nIMPORTANT: You MUST respond in JSON format matching the expected schema."
+    else:
+        messages.insert(0, {"role": "system", "content": "You are a helpful assistant. IMPORTANT: You MUST respond in JSON format matching the expected schema."})
+    
     try:
-        response = spec_client.beta.chat.completions.parse(
-            model="gpt-4o-mini-2024-07-18",
+        completion = spec_client.chat.completions.create(
+            model=LLM_MODEL,
             messages=messages,
             temperature=temperature,
-            response_format=response_format,
+            response_format={"type": "json_object"}
         )
-
-        if response.choices[0].finish_reason == "length":
-            raise Exception("The conversation was too long for the context window, resulting in incomplete JSON")
-        if response.choices[0].message.refusal is not None:
-            raise Exception(f"The OpenAI safety system refused the request and generated a refusal instead. response.choices[0].message.refusal")
-        if response.choices[0].finish_reason == "content_filter":
-            raise Exception("The model's output included restricted content, so the generation of JSON was halted and may be partial")
-    except Exception as e:
-        print(e)
-        raise e
-    
-    return response.choices[0].message.parsed
+        
+        json_str = completion.choices[0].message.content
+        return response_format.model_validate_json(json_str)
+    except Exception as fallback_e:
+        log_update(f"[GPT] Fallback JSON parsing also failed: {fallback_e}")
+        print(f"[GPT] Fallback JSON parsing also failed: {fallback_e}")
+        raise fallback_e
